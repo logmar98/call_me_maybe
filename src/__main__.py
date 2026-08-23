@@ -253,7 +253,7 @@ class OutputValidJson:
                 f"User: {p_text}\n"
                 "Assistant: "
             )
-            generated_text += '{"prompt": ' + safe_prompt + ', "name": "'
+            generated_text += '{"name": "'
 
             tokens = self.sdk.encode(generated_text)
             current_sequence: List[int] = tokens.tolist()[0]
@@ -304,9 +304,34 @@ class OutputValidJson:
                 
                 parsed_dict["prompt"] = p_text
 
+                # --- NEW SCHEMA-BASED TYPE CASTING ---
+                func_name = parsed_dict.get("name")
+                expected_params = {}
+                
+                # Find the corresponding function definition
+                for d in self.definitions:
+                    if d.get("name") == func_name:
+                        expected_params = d.get("parameters", {})
+                        break
+
+                # Cast the values according to the schema
                 for k, v in parsed_dict.get('parameters', {}).items():
-                    if isinstance(v, int):
-                        parsed_dict["parameters"][k] = float(v)
+                    expected_type = expected_params.get(k, {}).get("type")
+                    
+                    if expected_type in ["number", "integer"]:
+                        try:
+                            # Convert to float first to handle string decimals properly
+                            parsed_val = float(v)
+                            # Convert to integer if there are no trailing decimals
+                            if expected_type == "integer":
+                                parsed_dict["parameters"][k] = int(parsed_val)
+                            else:
+                                parsed_dict["parameters"][k] = parsed_val
+                        except (ValueError, TypeError):
+                            pass
+                    elif expected_type == "string":
+                        parsed_dict["parameters"][k] = str(v)
+                # -------------------------------------
 
                 valid_result = FunctionCallResult(**parsed_dict)
                 validated_output_list.append(valid_result.model_dump())
