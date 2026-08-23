@@ -10,10 +10,8 @@ from llm_sdk import Small_LLM_Model
 
 # --- Pydantic Models ---
 
-
 class ParameterDef(BaseModel):
     type: str
-
 
 class FunctionDef(BaseModel):
     name: str
@@ -21,12 +19,10 @@ class FunctionDef(BaseModel):
     parameters: Dict[str, ParameterDef]
     returns: ParameterDef
 
-
 class FunctionCallResult(BaseModel):
     prompt: str
     name: str
     parameters: Dict[str, Any]
-
 
 class OutputValidJson:
     sdk: Small_LLM_Model
@@ -89,37 +85,65 @@ class OutputValidJson:
             for i, v in self.vocab.items():
                 if v in x:
                     self.func_ids.append(i)
+                    
+        # --- NEW CACHING LOGIC ---
+        self.cache_double_quote = []
+        self.cache_comma = []
+        self.cache_parameters_key = []
+        self.cache_colon_and_brace = []
+        self.cache_no_end_brace = []
+        self.cache_valid_closure = []
+        self.cache_end_brace = []
+
+        for i, v in self.vocab.items():
+            v_lower = v.lower()
+            if '"' in v:
+                self.cache_double_quote.append(i)
+            if ',' in v:
+                self.cache_comma.append(i)
+            if 'parameter' in v or '"' in v or 's' in v:
+                self.cache_parameters_key.append(i)
+            if ':' in v or '{' in v or ' ' in v:
+                self.cache_colon_and_brace.append(i)
+            if '}' not in v:
+                self.cache_no_end_brace.append(i)
+            if ',' not in v_lower and 'return' not in v_lower:
+                self.cache_valid_closure.append(i)
+            if '}' in v:
+                self.cache_end_brace.append(i)
+        # -------------------------
 
         self.state = "FUNCTION_NAME"
         self.function_name = ""
+        # --- AT THE END OF YOUR NEW CACHING LOGIC IN __INIT__ ---
+        self.func_ids = np.array(self.func_ids, dtype=np.int32)
+        self.cache_double_quote = np.array(self.cache_double_quote, dtype=np.int32)
+        self.cache_comma = np.array(self.cache_comma, dtype=np.int32)
+        self.cache_parameters_key = np.array(self.cache_parameters_key, dtype=np.int32)
+        self.cache_colon_and_brace = np.array(self.cache_colon_and_brace, dtype=np.int32)
+        self.cache_no_end_brace = np.array(self.cache_no_end_brace, dtype=np.int32)
+        self.cache_valid_closure = np.array(self.cache_valid_closure, dtype=np.int32)
+        self.cache_end_brace = np.array(self.cache_end_brace, dtype=np.int32)
 
     def get_allowed_tokens_for_current_state(
         self, current_state_tokens: List[int]
     ) -> List[int]:
-        chosen_ids: List[int] = []
-
+        
+        # Replace the linear scans with O(1) cache lookups
         if self.state == "FUNCTION_NAME":
             return self.func_ids
 
         elif self.state == "DOUBLE_QUOTE":
-            for i, v in self.vocab.items():
-                if '"' in v:
-                    chosen_ids.append(i)
+            return self.cache_double_quote
 
         elif self.state == "COMMA":
-            for i, v in self.vocab.items():
-                if ',' in v:
-                    chosen_ids.append(i)
+            return self.cache_comma
 
         elif self.state == "PARAMETERS_KEY":
-            for i, v in self.vocab.items():
-                if 'parameter' in v or '"' in v or 's' in v:
-                    chosen_ids.append(i)
+            return self.cache_parameters_key
 
         elif self.state == "COLON_AND_BRACE":
-            for i, v in self.vocab.items():
-                if ':' in v or '{' in v or ' ' in v:
-                    chosen_ids.append(i)
+            return self.cache_colon_and_brace
 
         elif self.state == "PARAM_CONTENT":
             expected_args: List[str] = []
@@ -131,37 +155,46 @@ class OutputValidJson:
             output: str = self.sdk.decode(current_state_tokens)
             clean_output: str = output.strip()
 
+            # 1. Force opening quotes for keys right after a brace or comma
             if clean_output.endswith('{') or clean_output.endswith(','):
-                for i, v in self.vocab.items():
-                    if '"' in v:
-                        chosen_ids.append(i)
-                return chosen_ids
+                return self.cache_double_quote
 
             if not output.strip().startswith('"'):
                 output = '"' + output
+                clean_output = output.strip()
 
-            all_args_present: bool = all(
-                f'"{arg}"' in output for arg in expected_args
-            )
+            # 2. Check if all expected keys have been generated
+            all_args_present: bool = True
+            for arg in expected_args:
+                if f'"{arg}"' not in output:
+                    all_args_present = False
+                    break
 
-            if not all_args_present:
-                for i, v in self.vocab.items():
-                    if '}' not in v:
-                        chosen_ids.append(i)
+            # 3. Verify that the final value has actually been typed
+            is_complete: bool = False
+            if all_args_present and expected_args:
+                last_arg = expected_args[-1]
+                last_arg_idx = output.rfind(f'"{last_arg}"')
+                if last_arg_idx != -1:
+                    colon_idx = output.find(':', last_arg_idx)
+                    # If colon exists, ensure we are not hanging right after it
+                    if colon_idx != -1 and not clean_output.endswith(':'):
+                        is_complete = True
+            elif all_args_present and len(expected_args) == 0:
+                is_complete = True
+
+            if not is_complete:
+                # We still need args or values, completely block the closing '}'
+                return self.cache_no_end_brace
             else:
-                for i, v in self.vocab.items():
-                    v_lower: str = v.lower()
-                    if ',' not in v_lower and 'return' not in v_lower:
-                        chosen_ids.append(i)
-
-            return chosen_ids
+                # All required args and values are fully present!
+                # Block commas AND hallucination words to force a valid closure.
+                return self.cache_valid_closure
 
         elif self.state == "END_BRACE":
-            for i, v in self.vocab.items():
-                if '}' in v:
-                    chosen_ids.append(i)
+            return self.cache_end_brace
 
-        return chosen_ids
+        return []
 
     def transition(self, current_state_tokens: List[int]) -> List[int]:
         old_state: str = self.state
@@ -195,14 +228,21 @@ class OutputValidJson:
         return current_state_tokens
 
     def constrained(self) -> None:
-        all_output: List[str] = []
-        current_output: List[int] = []
+        validated_output_list: List[Dict[str, Any]] = []
 
         for prompt in self.prompts:
             output_text: List[int] = []
+            current_output: List[int] = []
             self.state = "FUNCTION_NAME"
+            self.function_name = ""
 
-            p_text = prompt['prompt']
+            p_text = prompt.get('prompt', None)
+            if not p_text:
+                break
+            
+            # Using json.dumps ensures any quotes in the prompt are escaped safely
+            safe_prompt: str = json.dumps(p_text)
+            
             generated_text: str = (
                 "You are a helpful assistant that translates natural\n"
                 "language into function calls.\n"
@@ -213,7 +253,7 @@ class OutputValidJson:
                 f"User: {p_text}\n"
                 "Assistant: "
             )
-            generated_text += '{"prompt": "' + p_text + '", "name": "'
+            generated_text += '{"prompt": ' + safe_prompt + ', "name": "'
 
             tokens = self.sdk.encode(generated_text)
             current_sequence: List[int] = tokens.tolist()[0]
@@ -222,63 +262,69 @@ class OutputValidJson:
                 raw_logits = self.sdk.get_logits_from_input_ids(
                     current_sequence
                 )
-                masked_logits = np.full(len(raw_logits), -np.inf)
-
-                choose_ids: List[int] = (
-                    self.get_allowed_tokens_for_current_state(
-                        current_output
-                    )
+                
+                # 1. Convert the raw list to a NumPy array once
+                raw_logits_np = np.array(raw_logits)
+                
+                choose_ids = self.get_allowed_tokens_for_current_state(
+                    current_output
                 )
 
-                if not choose_ids:
-                    masked_logits = np.array(raw_logits)
+                # 2. Vectorized assignment (No more Python 'for' loops!)
+                if len(choose_ids) == 0:
+                    masked_logits = raw_logits_np
+                else:
+                    masked_logits = np.full(len(raw_logits_np), -np.inf)
+                    masked_logits[choose_ids] = raw_logits_np[choose_ids]
 
-                for i in choose_ids:
-                    masked_logits[i] = raw_logits[i]
-
-                next_token_id: int = int(np.argmax(masked_logits))
+                next_token_id = int(np.argmax(masked_logits))
+                
                 current_sequence.append(next_token_id)
                 output_text.append(next_token_id)
                 current_output.append(next_token_id)
                 current_output = self.transition(current_output)
 
+                print('{"prompt": ' + safe_prompt + ', "name": "' + self.sdk.decode(output_text))
                 if self.state == "DONE":
-                    all_output.append(
-                        '{"prompt": "' + p_text +
-                        '", "name": "' + self.sdk.decode(output_text)
-                    )
                     break
 
-        # Safely validate and save the output
+            try:
+                generated_json_str = (
+                    '{"name": "' + self.sdk.decode(output_text)
+                )
+                
+                try:
+                    parsed_dict: Dict[str, Any] = json.loads(generated_json_str)
+                except json.JSONDecodeError as e:
+                    if "Invalid \\escape" in str(e):
+                        salvaged_str = generated_json_str.replace('\\', '\\\\')
+                        parsed_dict = json.loads(salvaged_str)
+                    else:
+                        raise e
+                
+                parsed_dict["prompt"] = p_text
+
+                for k, v in parsed_dict.get('parameters', {}).items():
+                    if isinstance(v, int):
+                        parsed_dict["parameters"][k] = float(v)
+
+                valid_result = FunctionCallResult(**parsed_dict)
+                validated_output_list.append(valid_result.model_dump())
+            except (json.JSONDecodeError, ValidationError) as e:
+                print(f"Skipping malformed output for '{p_text}': {e}")
+                continue
+
         try:
             output_dir = os.path.dirname(self.output_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
 
             with open(self.output_path, "w") as f:
-                all_output_str: str = ", ".join(all_output)
-                all_output_str = '[' + all_output_str + ']'
-
-                all_list: List[Dict[str, Any]] = json.loads(all_output_str)
-                validated_output_list: List[Dict[str, Any]] = []
-
-                for x in all_list:
-                    for k, v in x.get('parameters', {}).items():
-                        if isinstance(v, int):
-                            x["parameters"][k] = float(v)
-
-                    valid_result = FunctionCallResult(**x)
-                    validated_output_list.append(valid_result.model_dump())
-
                 json.dump(validated_output_list, f, indent=4)
                 print(f"Successfully saved to {self.output_path}")
-        except ValidationError as e:
-            print(f"Error: Generated JSON failed schema validation:\n{e}")
-            sys.exit(1)
         except Exception as e:
             print(f"Error saving results to '{self.output_path}': {e}")
             sys.exit(1)
-
 
 def main() -> None:
     start_time: float = time()
@@ -303,7 +349,6 @@ def main() -> None:
     end_time: float = time()
     elapsed: float = end_time - start_time
     print(f"Execution time: {elapsed / 60.0:.2f} minutes")
-
 
 if __name__ == "__main__":
     main()
