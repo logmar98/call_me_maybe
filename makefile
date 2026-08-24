@@ -1,9 +1,10 @@
 
+
+all: run
+
 install:
 	@uv sync
 	@uv add mypy numpy flake8 torch pydantic
-
-
 
 run:
 	@uv run python3 -m src

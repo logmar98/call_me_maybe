@@ -1,17 +1,19 @@
-import sys
 import argparse
-import os
 import json
-import numpy as np
+import os
+import sys
 from time import time
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
+import numpy as np
 from pydantic import BaseModel, ValidationError
+
 from llm_sdk import Small_LLM_Model
 
-# --- Pydantic Models ---
 
 class ParameterDef(BaseModel):
     type: str
+
 
 class FunctionDef(BaseModel):
     name: str
@@ -19,33 +21,42 @@ class FunctionDef(BaseModel):
     parameters: Dict[str, ParameterDef]
     returns: ParameterDef
 
+
 class FunctionCallResult(BaseModel):
     prompt: str
     name: str
     parameters: Dict[str, Any]
 
+
 class OutputValidJson:
-    sdk: Small_LLM_Model
+    sdk: Any
     output_path: str
     vocab: Dict[int, str]
-    prompts: List[Dict[str, str]]
+    prompts: List[Dict[str, Any]]
     definitions_str: str
     definitions: List[Dict[str, Any]]
     func_names: List[str]
-    func_ids: List[int]
+    func_ids: Any
     state: str
     function_name: str
+    cache_double_quote: Any
+    cache_comma: Any
+    cache_parameters_key: Any
+    cache_colon_and_brace: Any
+    cache_no_end_brace: Any
+    cache_valid_closure: Any
+    cache_end_brace: Any
 
     def __init__(
         self, def_path: str, input_path: str, output_path: str
     ) -> None:
         self.sdk = Small_LLM_Model()
         self.output_path = output_path
-        self.func_ids = []
+
+        func_ids_list: List[int] = []
         self.definitions = []
         self.func_names = []
 
-        # Safely load vocabulary
         try:
             with open(self.sdk.get_path_to_vocab_file()) as file:
                 vocab_raw: Dict[str, Any] = json.load(file)
@@ -54,7 +65,6 @@ class OutputValidJson:
             print(f"Error loading vocabulary file: {e}")
             sys.exit(1)
 
-        # Safely load input prompts
         try:
             with open(input_path) as f_calling:
                 self.prompts = json.load(f_calling)
@@ -62,7 +72,6 @@ class OutputValidJson:
             print(f"Error loading input file '{input_path}': {e}")
             sys.exit(1)
 
-        # Safely load and validate definitions
         try:
             with open(def_path) as f_definition:
                 self.definitions_str = f_definition.read()
@@ -84,52 +93,60 @@ class OutputValidJson:
         for x in self.func_names:
             for i, v in self.vocab.items():
                 if v in x:
-                    self.func_ids.append(i)
-                    
-        # --- NEW CACHING LOGIC ---
-        self.cache_double_quote = []
-        self.cache_comma = []
-        self.cache_parameters_key = []
-        self.cache_colon_and_brace = []
-        self.cache_no_end_brace = []
-        self.cache_valid_closure = []
-        self.cache_end_brace = []
+                    func_ids_list.append(i)
+
+        cache_double_quote_list: List[int] = []
+        cache_comma_list: List[int] = []
+        cache_parameters_key_list: List[int] = []
+        cache_colon_and_brace_list: List[int] = []
+        cache_no_end_brace_list: List[int] = []
+        cache_valid_closure_list: List[int] = []
+        cache_end_brace_list: List[int] = []
 
         for i, v in self.vocab.items():
             v_lower = v.lower()
             if '"' in v:
-                self.cache_double_quote.append(i)
+                cache_double_quote_list.append(i)
             if ',' in v:
-                self.cache_comma.append(i)
+                cache_comma_list.append(i)
             if 'parameter' in v or '"' in v or 's' in v:
-                self.cache_parameters_key.append(i)
+                cache_parameters_key_list.append(i)
             if ':' in v or '{' in v or ' ' in v:
-                self.cache_colon_and_brace.append(i)
+                cache_colon_and_brace_list.append(i)
             if '}' not in v:
-                self.cache_no_end_brace.append(i)
+                cache_no_end_brace_list.append(i)
             if ',' not in v_lower and 'return' not in v_lower:
-                self.cache_valid_closure.append(i)
+                cache_valid_closure_list.append(i)
             if '}' in v:
-                self.cache_end_brace.append(i)
-        # -------------------------
+                cache_end_brace_list.append(i)
 
         self.state = "FUNCTION_NAME"
         self.function_name = ""
-        # --- AT THE END OF YOUR NEW CACHING LOGIC IN __INIT__ ---
-        self.func_ids = np.array(self.func_ids, dtype=np.int32)
-        self.cache_double_quote = np.array(self.cache_double_quote, dtype=np.int32)
-        self.cache_comma = np.array(self.cache_comma, dtype=np.int32)
-        self.cache_parameters_key = np.array(self.cache_parameters_key, dtype=np.int32)
-        self.cache_colon_and_brace = np.array(self.cache_colon_and_brace, dtype=np.int32)
-        self.cache_no_end_brace = np.array(self.cache_no_end_brace, dtype=np.int32)
-        self.cache_valid_closure = np.array(self.cache_valid_closure, dtype=np.int32)
-        self.cache_end_brace = np.array(self.cache_end_brace, dtype=np.int32)
+
+        self.func_ids = np.array(func_ids_list, dtype=np.int32)
+        self.cache_double_quote = np.array(
+            cache_double_quote_list, dtype=np.int32
+        )
+        self.cache_comma = np.array(cache_comma_list, dtype=np.int32)
+        self.cache_parameters_key = np.array(
+            cache_parameters_key_list, dtype=np.int32
+        )
+        self.cache_colon_and_brace = np.array(
+            cache_colon_and_brace_list, dtype=np.int32
+        )
+        self.cache_no_end_brace = np.array(
+            cache_no_end_brace_list, dtype=np.int32
+        )
+        self.cache_valid_closure = np.array(
+            cache_valid_closure_list, dtype=np.int32
+        )
+        self.cache_end_brace = np.array(
+            cache_end_brace_list, dtype=np.int32
+        )
 
     def get_allowed_tokens_for_current_state(
         self, current_state_tokens: List[int]
-    ) -> List[int]:
-        
-        # Replace the linear scans with O(1) cache lookups
+    ) -> Any:
         if self.state == "FUNCTION_NAME":
             return self.func_ids
 
@@ -148,14 +165,13 @@ class OutputValidJson:
         elif self.state == "PARAM_CONTENT":
             expected_args: List[str] = []
             for x in self.definitions:
-                if x['name'] == getattr(self, 'function_name', ''):
-                    expected_args = list(x['parameters'].keys())
+                if x.get('name') == getattr(self, 'function_name', ''):
+                    expected_args = list(x.get('parameters', {}).keys())
                     break
 
             output: str = self.sdk.decode(current_state_tokens)
             clean_output: str = output.strip()
 
-            # 1. Force opening quotes for keys right after a brace or comma
             if clean_output.endswith('{') or clean_output.endswith(','):
                 return self.cache_double_quote
 
@@ -163,38 +179,32 @@ class OutputValidJson:
                 output = '"' + output
                 clean_output = output.strip()
 
-            # 2. Check if all expected keys have been generated
             all_args_present: bool = True
             for arg in expected_args:
                 if f'"{arg}"' not in output:
                     all_args_present = False
                     break
 
-            # 3. Verify that the final value has actually been typed
             is_complete: bool = False
             if all_args_present and expected_args:
                 last_arg = expected_args[-1]
                 last_arg_idx = output.rfind(f'"{last_arg}"')
                 if last_arg_idx != -1:
                     colon_idx = output.find(':', last_arg_idx)
-                    # If colon exists, ensure we are not hanging right after it
                     if colon_idx != -1 and not clean_output.endswith(':'):
                         is_complete = True
             elif all_args_present and len(expected_args) == 0:
                 is_complete = True
 
             if not is_complete:
-                # We still need args or values, completely block the closing '}'
                 return self.cache_no_end_brace
             else:
-                # All required args and values are fully present!
-                # Block commas AND hallucination words to force a valid closure.
                 return self.cache_valid_closure
 
         elif self.state == "END_BRACE":
             return self.cache_end_brace
 
-        return []
+        return np.array([], dtype=np.int32)
 
     def transition(self, current_state_tokens: List[int]) -> List[int]:
         old_state: str = self.state
@@ -227,6 +237,22 @@ class OutputValidJson:
 
         return current_state_tokens
 
+    def get_compact_definitions(self) -> str:
+        compact_defs: List[Dict[str, Any]] = []
+        for func in self.definitions:
+            params = {
+                k: v.get("type", "string")
+                for k, v in func.get("parameters", {}).items()
+            }
+
+            compact_defs.append({
+                "name": func.get("name", ""),
+                "description": func.get("description", ""),
+                "parameters": params
+            })
+
+        return json.dumps(compact_defs, separators=(',', ':'))
+
     def constrained(self) -> None:
         validated_output_list: List[Dict[str, Any]] = []
 
@@ -236,41 +262,43 @@ class OutputValidJson:
             self.state = "FUNCTION_NAME"
             self.function_name = ""
 
-            p_text = prompt.get('prompt', None)
+            p_text = prompt.get('prompt')
             if not p_text:
                 break
-            
-            # Using json.dumps ensures any quotes in the prompt are escaped safely
+            print(f"Prompt: {p_text}\n")
+
             safe_prompt: str = json.dumps(p_text)
-            
-            generated_text: str = (
-                "You are a helpful assistant that translates natural\n"
-                "language into function calls.\n"
-                "You must output ONLY a valid JSON object with this format:\n"
-                '{"name": "<function_name>", "parameters": {"<p1>": <v1>}}\n\n'
+            compact_defs_str = self.get_compact_definitions()
+
+            generated_text = (
+                "<|im_start|>system\n"
+                "You are an AI that translates natural language "
+                "into JSON function calls.\n"
+                "You must output ONLY a valid JSON object. Use "
+                "the EXACT parameter keys from the available "
+                "functions.\n\n"
                 "Available functions:\n"
-                f"{self.definitions_str}\n\n"
-                f"User: {p_text}\n"
-                "Assistant: "
+                f"{compact_defs_str}\n"
+                "<|im_end|>\n"
+                "<|im_start|>user\n"
+                f"{p_text}<|im_end|>\n"
+                "<|im_start|>assistant\n"
+                '{"name": "'
             )
-            generated_text += '{"name": "'
 
             tokens = self.sdk.encode(generated_text)
             current_sequence: List[int] = tokens.tolist()[0]
+            running_str = '{"name": "'
 
             for _ in range(500):
                 raw_logits = self.sdk.get_logits_from_input_ids(
                     current_sequence
                 )
-                
-                # 1. Convert the raw list to a NumPy array once
                 raw_logits_np = np.array(raw_logits)
-                
                 choose_ids = self.get_allowed_tokens_for_current_state(
                     current_output
                 )
 
-                # 2. Vectorized assignment (No more Python 'for' loops!)
                 if len(choose_ids) == 0:
                     masked_logits = raw_logits_np
                 else:
@@ -278,51 +306,61 @@ class OutputValidJson:
                     masked_logits[choose_ids] = raw_logits_np[choose_ids]
 
                 next_token_id = int(np.argmax(masked_logits))
-                
+
                 current_sequence.append(next_token_id)
                 output_text.append(next_token_id)
                 current_output.append(next_token_id)
+
+                new_token_str = self.vocab.get(next_token_id, "").replace(
+                    "Ġ", " "
+                ).replace("Ċ", "\n")
+                running_str += new_token_str
+                decoded_str = self.sdk.decode(output_text)
+                print(
+                    '{"prompt": ' + safe_prompt + ', "name": "' + decoded_str
+                )
+                try:
+                    parsed_check = json.loads(running_str)
+                    if (
+                        isinstance(parsed_check, dict)
+                        and "name" in parsed_check
+                    ):
+                        self.state = "DONE"
+                        break
+                except json.JSONDecodeError:
+                    pass
+
                 current_output = self.transition(current_output)
 
-                print('{"prompt": ' + safe_prompt + ', "name": "' + self.sdk.decode(output_text))
                 if self.state == "DONE":
                     break
 
             try:
-                generated_json_str = (
-                    '{"name": "' + self.sdk.decode(output_text)
-                )
-                
                 try:
-                    parsed_dict: Dict[str, Any] = json.loads(generated_json_str)
+                    parsed_dict: Dict[str, Any] = json.loads(running_str)
                 except json.JSONDecodeError as e:
                     if "Invalid \\escape" in str(e):
-                        salvaged_str = generated_json_str.replace('\\', '\\\\')
+                        salvaged_str = running_str.replace('\\', '\\\\')
                         parsed_dict = json.loads(salvaged_str)
                     else:
                         raise e
-                
-                parsed_dict["prompt"] = p_text
 
-                # --- NEW SCHEMA-BASED TYPE CASTING ---
+                parsed_dict["prompt"] = str(p_text)
+
                 func_name = parsed_dict.get("name")
-                expected_params = {}
-                
-                # Find the corresponding function definition
+                expected_params: Dict[str, Any] = {}
+
                 for d in self.definitions:
                     if d.get("name") == func_name:
                         expected_params = d.get("parameters", {})
                         break
 
-                # Cast the values according to the schema
                 for k, v in parsed_dict.get('parameters', {}).items():
                     expected_type = expected_params.get(k, {}).get("type")
-                    
+
                     if expected_type in ["number", "integer"]:
                         try:
-                            # Convert to float first to handle string decimals properly
                             parsed_val = float(v)
-                            # Convert to integer if there are no trailing decimals
                             if expected_type == "integer":
                                 parsed_dict["parameters"][k] = int(parsed_val)
                             else:
@@ -331,7 +369,6 @@ class OutputValidJson:
                             pass
                     elif expected_type == "string":
                         parsed_dict["parameters"][k] = str(v)
-                # -------------------------------------
 
                 valid_result = FunctionCallResult(**parsed_dict)
                 validated_output_list.append(valid_result.model_dump())
@@ -351,6 +388,7 @@ class OutputValidJson:
             print(f"Error saving results to '{self.output_path}': {e}")
             sys.exit(1)
 
+
 def main() -> None:
     start_time: float = time()
 
@@ -367,13 +405,21 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-
-    ovj = OutputValidJson(args.functions_definition, args.input, args.output)
-    ovj.constrained()
+    try:
+        print("-------------Call Me Maybe-------------\n")
+        ovj = OutputValidJson(args.functions_definition,
+                              args.input, args.output)
+        ovj.constrained()
+    except KeyboardInterrupt:
+        print("exit the program")
+        sys.exit(0)
+    except Exception as e:
+        print(e)
 
     end_time: float = time()
     elapsed: float = end_time - start_time
     print(f"Execution time: {elapsed / 60.0:.2f} minutes")
+
 
 if __name__ == "__main__":
     main()
