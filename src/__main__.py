@@ -267,7 +267,8 @@ class OutputValidJson:
 
             p_text = prompt.get('prompt')
             if not p_text:
-                break
+                print("empty prompt")
+                continue
             print(f"Prompt: {p_text}\n")
 
             safe_prompt: str = json.dumps(p_text)
@@ -393,7 +394,6 @@ class OutputValidJson:
 
 
 def main() -> None:
-    start_time: float = time()
 
     parser = argparse.ArgumentParser(description="Function Calling Tool")
     parser.add_argument(
@@ -408,11 +408,13 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    start_time: float = time()
     try:
         print("-------------Call Me Maybe-------------\n")
         ovj = OutputValidJson(args.functions_definition,
                               args.input, args.output)
         ovj.constrained()
+
     except KeyboardInterrupt:
         print("exit the program")
         sys.exit(0)
