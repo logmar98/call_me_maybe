@@ -82,6 +82,9 @@ class OutputValidJson:
                 for d in raw_defs:
                     valid_def = FunctionDef(**d)
                     self.definitions.append(valid_def.model_dump())
+                if not self.definitions:
+                    print("Error: missing definitions")
+                    sys.exit(1)
         except ValidationError as e:
             print(f"Validation error in file '{def_path}':\n{e}")
             sys.exit(1)
